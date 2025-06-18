@@ -2,6 +2,7 @@ from dash import Dash, html, dcc, dash_table, Input, Output
 import pandas as pd
 import plotly.express as px
 import dash_bootstrap_components as dbc
+from dash.exceptions import PreventUpdate
 
 # Carga de datos
 df = pd.read_excel("analfabetismo_mundial_2000_2025.xlsx")
@@ -14,11 +15,9 @@ df['Total_Mujeres'] = pd.to_numeric(df['Total_Mujeres'], errors='coerce')
 df['5-9_Total'] = pd.to_numeric(df.get('5-9_Total', 0), errors='coerce')
 df['10-15_Total'] = pd.to_numeric(df.get('10-15_Total', 0), errors='coerce')
 
-# App
 app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 server = app.server
 
-# Layout
 app.layout = dbc.Container([
     html.H1("📊 Evolución del Analfabetismo Mundial (2000–2025)", className="text-center mt-4 mb-4"),
     dcc.Tabs(id="tabs", value="tab1", children=[
@@ -36,10 +35,10 @@ app.layout = dbc.Container([
     "padding": "20px"
 })
 
-# Callback principal para renderizar pestañas
 @app.callback(
     Output("contenido-tab", "children"),
-    Input("tabs", "value")
+    Input("tabs", "value"),
+    prevent_initial_call=True
 )
 def renderizar_contenido(tab):
     if tab == "tab1":
@@ -170,7 +169,7 @@ def renderizar_contenido(tab):
             dcc.Graph(id='grafico-pastel'),
         ])
 
-# Callback para manejar paginación o mostrar todos (fuera de la función renderizar_contenido)
+# Callback tabla datos con prevención de errores por componente no renderizado
 @app.callback(
     Output('tabla-datos', 'data'),
     Output('tabla-datos', 'page_size'),
@@ -179,8 +178,11 @@ def renderizar_contenido(tab):
     Input('modo-tabla', 'value'),
     Input('tabla-datos', 'page_current'),
     Input('tabla-datos', 'page_size'),
+    prevent_initial_call=True
 )
 def actualizar_tabla(modo, pagina_actual, tamano_pagina):
+    if modo is None:
+        raise PreventUpdate
     if modo == 'todo':
         return df.to_dict('records'), len(df), 0, 'none'
     else:
@@ -189,73 +191,76 @@ def actualizar_tabla(modo, pagina_actual, tamano_pagina):
         datos_pagina = df.iloc[start:end].to_dict('records')
         return datos_pagina, tamano_pagina, pagina_actual, 'custom'
 
-# Callbacks para tabs 4 y 6 (por país y pastel)
+# Callback grafico pais
 @app.callback(
     Output('grafico-pais', 'figure'),
-    Input('dropdown-pais', 'value')
+    Input('dropdown-pais', 'value'),
+    prevent_initial_call=True
 )
 def actualizar_grafico_pais(pais):
-    if pais:
-        df_pais = df[df['País'] == pais]
-        fig = px.line(df_pais, x='Año', y='Analfabetas', markers=True,
-                      title=f"Evolución del Analfabetismo en {pais}")
-        return fig
-    return px.line(title="Selecciona un país para ver los datos")
+    if not pais:
+        raise PreventUpdate
+    df_pais = df[df['País'] == pais]
+    fig = px.line(df_pais, x='Año', y='Analfabetas', markers=True,
+                  title=f"Evolución del Analfabetismo en {pais}")
+    return fig
 
+# Callback grafico top 5 paises
 @app.callback(
     Output('grafico-top5', 'figure'),
-    Input('slider-anio', 'value')
+    Input('slider-anio', 'value'),
+    prevent_initial_call=True
 )
 def actualizar_grafico_top5(anio):
-    if anio:
-        df_anio = df[df['Año'] == anio]
-        top5 = df_anio.nlargest(5, 'Analfabetas')
-        fig = px.bar(top5, x='País', y='Analfabetas',
-                     title=f"Top 5 países con mayor analfabetismo en {anio}",
-                     color='País')
-        return fig
-    return px.bar(title="Selecciona un año")
+    if not anio:
+        raise PreventUpdate
+    df_anio = df[df['Año'] == anio]
+    top5 = df_anio.nlargest(5, 'Analfabetas')
+    fig = px.bar(top5, x='País', y='Analfabetas',
+                 title=f"Top 5 países con mayor analfabetismo en {anio}",
+                 color='País')
+    return fig
 
+# Callback grafico pastel
 @app.callback(
     Output('grafico-pastel', 'figure'),
-    [Input('dropdown-pais-pastel', 'value'),
-     Input('slider-anio-pastel', 'value')]
+    Input('dropdown-pais-pastel', 'value'),
+    Input('slider-anio-pastel', 'value'),
+    prevent_initial_call=True
 )
 def actualizar_grafico_pastel(pais, anio):
-    if pais and anio:
-        df_sel = df[(df['País'] == pais) & (df['Año'] == anio)]
-        if df_sel.empty:
-            return px.pie(values=[1], names=["Sin datos"], title=f"No hay datos para {pais} en {anio}")
+    if not pais or not anio:
+        raise PreventUpdate
+    df_sel = df[(df['País'] == pais) & (df['Año'] == anio)]
+    if df_sel.empty:
+        return px.pie(values=[1], names=["Sin datos"], title=f"No hay datos para {pais} en {anio}")
 
-        analfabetas = df_sel['Analfabetas'].values[0]
-        alfabetas = df_sel['Alfabetas'].values[0]
+    analfabetas = df_sel['Analfabetas'].values[0]
+    alfabetas = df_sel['Alfabetas'].values[0]
 
-        if pd.isna(analfabetas) or pd.isna(alfabetas) or analfabetas < 0 or alfabetas < 0:
-            return px.pie(values=[1], names=["Dato inválido"], title=f"Dato inválido para {pais} en {anio}")
+    if pd.isna(analfabetas) or pd.isna(alfabetas) or analfabetas < 0 or alfabetas < 0:
+        return px.pie(values=[1], names=["Dato inválido"], title=f"Dato inválido para {pais} en {anio}")
 
-        total = analfabetas + alfabetas
-        if total == 0:
-            return px.pie(values=[1], names=["Datos vacíos"], title=f"Datos vacíos para {pais} en {anio}")
+    total = analfabetas + alfabetas
+    if total == 0:
+        return px.pie(values=[1], names=["Datos vacíos"], title=f"Datos vacíos para {pais} en {anio}")
 
-        valores_pct = [analfabetas / total * 100, alfabetas / total * 100]
+    valores_pct = [analfabetas / total * 100, alfabetas / total * 100]
 
-        fig = px.pie(
-            names=["Analfabetas", "Alfabetas"],
-            values=valores_pct,
-            title=f"Distribución de Analfabetas y Alfabetas en {pais} - {anio}",
-            color_discrete_map={"Analfabetas": "red", "Alfabetas": "green"}
-        )
-        fig.update_traces(
-            textinfo='percent+label',
-            hovertemplate='%{label}: %{value:.2f}%<extra></extra>',
-            textfont_size=16,
-            marker=dict(line=dict(color='#000000', width=2))
-        )
-        return fig
-    return px.pie(values=[1], names=["Seleccione país y año"], title="Esperando selección...")
+    fig = px.pie(
+        names=["Analfabetas", "Alfabetas"],
+        values=valores_pct,
+        title=f"Distribución de Analfabetas y Alfabetas en {pais} - {anio}",
+        color_discrete_map={"Analfabetas": "red", "Alfabetas": "green"}
+    )
+    fig.update_traces(
+        textinfo='percent+label',
+        hovertemplate='%{label}: %{value:.2f}%<extra></extra>',
+        textfont_size=16,
+        marker=dict(line=dict(color='#000000', width=2))
+    )
+    return fig
 
-server = app.server
-
-# Ejecutar servidor
 if __name__ == "__main__":
     app.run(debug=True)
+
